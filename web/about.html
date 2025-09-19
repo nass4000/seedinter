@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seedream 4 Image Editor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <div class="header-top">
+        <h1>Seedream 4 Image Editor</h1>
+        <nav class="nav-links">
+          <a href="/">Video tasks</a>
+          <a href="/about" aria-current="page">Seedream edit</a>
+        </nav>
+      </div>
+      <p class="description">Mix and edit images via fal.ai or hit the ByteDance edit endpoint directly. The Flask backend only stores which user launched each task.</p>
+      <div class="auth-bar" id="auth-bar">
+        <form id="auth-form" class="auth-form" autocomplete="off">
+          <div class="auth-fields">
+            <label>
+              Username
+              <input id="auth-username" name="username" type="text" autocomplete="username" required />
+            </label>
+            <label>
+              Password
+              <input id="auth-password" name="password" type="password" autocomplete="current-password" required />
+            </label>
+          </div>
+          <div class="auth-actions">
+            <button type="submit" id="auth-submit">Sign in</button>
+            <button type="button" id="auth-toggle" class="secondary">Create account</button>
+          </div>
+          <p id="auth-error" class="auth-error hidden" role="alert"></p>
+        </form>
+        <div id="auth-status" class="auth-status hidden" aria-live="polite">
+          <p>Signed in as <strong id="auth-user"></strong></p>
+          <div class="auth-actions">
+            <button type="button" id="auth-logout" class="secondary">Sign out</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="panel">
+      <form id="edit-form" novalidate>
+        <fieldset>
+          <legend>Provider</legend>
+          <label>
+            Backend provider
+            <select id="provider" name="provider">
+              <option value="fal">fal.ai proxy</option>
+            </select>
+            <small class="hint">Select once and the choice persists locally.</small>
+          </label>
+          <label>
+            Provider API key
+            <input id="provider-key" name="providerKey" type="password" autocomplete="off" placeholder="fal-... or token" />
+            <small class="hint">Only stored in your browser; sent with each submission for the active provider.</small>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Application</legend>
+          <label>
+            Application ID
+            <input id="application" name="application" type="text" required value="fal-ai/bytedance/seedream/v4/edit" />
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Prompt</legend>
+          <label>
+            Edit prompt
+            <textarea id="prompt" name="prompt" rows="4" required>Dress the model in the clothes and hat. Add a cat to the scene and change the background to a Victorian era building.</textarea>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Generation options</legend>
+          <div class="field-grid">
+            <label>
+              Image size
+              <select id="image-size" name="imageSize">
+                <option value="square_hd">square_hd (1024x1024)</option>
+                <option value="square">square</option>
+                <option value="portrait_4_3">portrait_4_3</option>
+                <option value="portrait_16_9">portrait_16_9</option>
+                <option value="landscape_4_3">landscape_4_3</option>
+                <option value="landscape_16_9">landscape_16_9</option>
+                <option value="custom">Custom size</option>
+              </select>
+            </label>
+            <label id="custom-size-fields" class="hidden">
+              Custom dimensions (px)
+              <div class="inline-fields">
+                <input id="custom-width" type="number" min="512" max="4096" step="1" placeholder="Width" />
+                <input id="custom-height" type="number" min="512" max="4096" step="1" placeholder="Height" />
+              </div>
+            </label>
+            <label>
+              Generations (num_images)
+              <input id="num-images" type="number" min="1" max="4" step="1" value="1" />
+            </label>
+            <label>
+              Max images per generation
+              <input id="max-images" type="number" min="1" max="6" step="1" value="1" />
+            </label>
+            <label class="checkbox">
+              <input id="safety-checker" type="checkbox" checked />
+              Enable safety checker
+            </label>
+            <label class="checkbox">
+              <input id="sync-mode" type="checkbox" />
+              Use sync mode
+            </label>
+            <label>
+              Seed (-1 for random)
+              <input id="seed" type="number" value="-1" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Input images</legend>
+          <label class="file-picker">
+            Upload reference images (up to 10)
+            <input id="image-input" type="file" accept="image/*" multiple />
+          </label>
+          <div id="upload-preview" class="thumb-grid hidden"></div>
+          <div class="divider"><span>and/or</span></div>
+          <label>
+            Reference image URLs (one per line)
+            <textarea id="image-urls" rows="3" placeholder="https://...\nhttps://..."></textarea>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Polling</legend>
+          <label>
+            Poll interval (seconds)
+            <input id="poll-interval" type="number" min="2" max="30" step="1" value="5" />
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit" id="submit-button" class="primary">Start edit</button>
+          <button type="button" id="cancel-poll" class="secondary" disabled>Cancel polling</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel" id="status-panel">
+      <h2>Status</h2>
+      <div id="task-info" class="task-info">
+        <p>No task submitted yet.</p>
+      </div>
+      <div id="result-gallery" class="gallery hidden" aria-live="polite"></div>
+      <div class="log-container">
+        <h3>Activity log</h3>
+        <pre id="log"></pre>
+      </div>
+      <div class="history">
+        <h3>Recent tasks</h3>
+        <ul id="history-list"></ul>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="about.js"></script>
+</body>
+</html>
