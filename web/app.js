@@ -1,10 +1,9 @@
-import { apiClient, bootstrapServices, buildTaskPayload, providerStore, sessionManager } from "./client.js";
+import { apiClient, bootstrapServices, buildTaskPayload, providerStore } from "./client.js";
 
 const API_BASE = "/api/tasks";
 const HISTORY_LIMIT = 15;
 const MAX_LOG_ENTRIES = 200;
 const MAX_UPLOAD_SIZE_BYTES = 15 * 1024 * 1024;
-const AUTH_MODES = { login: "login", register: "register" };
 
 const statusLabels = {
   queued: "Queued",
@@ -37,16 +36,17 @@ const elements = {
   taskInfo: document.getElementById("task-info"),
   log: document.getElementById("log"),
   resultVideo: document.getElementById("result-video"),
+  statusPlaceholder: document.getElementById("status-placeholder"),
+  taskBadge: document.getElementById("task-badge"),
   historyList: document.getElementById("history-list"),
-  authForm: document.getElementById("auth-form"),
-  authUsername: document.getElementById("auth-username"),
-  authPassword: document.getElementById("auth-password"),
-  authSubmit: document.getElementById("auth-submit"),
-  authToggle: document.getElementById("auth-toggle"),
-  authError: document.getElementById("auth-error"),
-  authStatus: document.getElementById("auth-status"),
-  authUser: document.getElementById("auth-user"),
-  authLogout: document.getElementById("auth-logout")
+  imageAttachBtn: document.getElementById("image-attach-btn"),
+  promptBtn: document.getElementById("prompt-btn"),
+  promptModal: document.getElementById("prompt-modal"),
+  promptModalClose: document.getElementById("prompt-modal-close"),
+  promptApply: document.getElementById("prompt-apply"),
+  imageModal: document.getElementById("image-modal"),
+  imageModalClose: document.getElementById("image-modal-close"),
+  imageApply: document.getElementById("image-apply")
 };
 
 const state = {
@@ -56,68 +56,59 @@ const state = {
   pollController: null,
   pollTimeoutId: null,
   currentApplication: null,
-  currentProvider: providerStore.getSelected(),
+  currentProvider: "fal",
   history: [],
-  taskCache: new Map(),
-  authMode: AUTH_MODES.login
+  taskCache: new Map()
 };
 
 function logMessage(message, level = "info") {
   const timestamp = new Date().toLocaleTimeString();
   const prefix =
-    level === "error"
-      ? "ERR"
-      : level === "success"
-      ? "OK "
-      : level === "warn"
-      ? "WRN"
-      : "INF";
+    level === "error" ? "ERR" : level === "success" ? "OK " : level === "warn" ? "WRN" : "INF";
   const entry = `[${timestamp}] ${prefix} ${message}`;
   state.logEntries.push(entry);
-  if (state.logEntries.length > MAX_LOG_ENTRIES) {
-    state.logEntries.shift();
-  }
+  if (state.logEntries.length > MAX_LOG_ENTRIES) state.logEntries.shift();
   elements.log.textContent = state.logEntries.join("\n");
   elements.log.scrollTop = elements.log.scrollHeight;
 }
 
 function escapeHtml(value) {
   return value
-    ? value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;")
+    ? value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+           .replace(/"/g, "&quot;").replace(/'/g, "&#039;")
     : "";
 }
 
 function formatTimestamp(value) {
   if (!value) return "";
-  try {
-    return new Date(value).toLocaleString();
-  } catch (error) {
-    return String(value);
-  }
+  try { return new Date(value).toLocaleString(); } catch { return String(value); }
 }
 
 function getVideoUrl(task) {
-  if (task?.content?.video_url) {
-    return task.content.video_url;
-  }
-  if (task?.result?.video?.url) {
-    return task.result.video.url;
-  }
+  if (task?.content?.video_url) return task.content.video_url;
+  if (task?.result?.video?.url) return task.result.video.url;
   return null;
 }
 
+function updateStatusBadge(task) {
+  const badge = elements.taskBadge;
+  if (!badge) return;
+  if (!task?.status) { badge.className = "status-badge hidden"; badge.textContent = ""; return; }
+  const label = statusLabels[task.status] || task.status;
+  badge.textContent = label;
+  badge.className = `status-badge status-badge-${task.status}`;
+}
+
 function setVideoUrl(url) {
+  const ph = elements.statusPlaceholder;
   if (url) {
     elements.resultVideo.src = url;
     elements.resultVideo.classList.remove("hidden");
+    if (ph) ph.classList.add("hidden");
   } else {
     elements.resultVideo.removeAttribute("src");
     elements.resultVideo.classList.add("hidden");
+    if (ph) ph.classList.remove("hidden");
   }
 }
 
@@ -128,7 +119,8 @@ function setBusy(isBusy) {
 }
 
 function resetTaskState() {
-  renderTaskInfo(null);
+  elements.taskInfo.textContent = "";
+  if (elements.taskBadge) { elements.taskBadge.className = "status-badge hidden"; elements.taskBadge.textContent = ""; }
   setVideoUrl(null);
   state.logEntries = [];
   elements.log.textContent = "";
@@ -136,18 +128,10 @@ function resetTaskState() {
 }
 
 function stopPolling(clearStatus = false) {
-  if (state.pollTimeoutId) {
-    clearTimeout(state.pollTimeoutId);
-    state.pollTimeoutId = null;
-  }
-  if (state.pollController) {
-    state.pollController.abort();
-    state.pollController = null;
-  }
+  if (state.pollTimeoutId) { clearTimeout(state.pollTimeoutId); state.pollTimeoutId = null; }
+  if (state.pollController) { state.pollController.abort(); state.pollController = null; }
   elements.cancelPoll.disabled = true;
-  if (clearStatus) {
-    elements.cancelPoll.classList.add("hidden");
-  }
+  if (clearStatus) elements.cancelPoll.classList.add("hidden");
 }
 
 function ingestLogs(logs) {
@@ -158,114 +142,44 @@ function ingestLogs(logs) {
     const key = `${entry.id ?? ""}-${message}`;
     if (state.seenLogEntries.has(key)) return;
     state.seenLogEntries.add(key);
-    const level = typeof entry.level === "string" ? entry.level.toLowerCase() : "info";
-    const logLevel =
-      level.includes("error")
-        ? "error"
-        : level.includes("warn")
-        ? "warn"
-        : level.includes("success")
-        ? "success"
-        : "info";
+    const level = (typeof entry.level === "string" ? entry.level : "").toLowerCase();
+    const logLevel = level.includes("error") ? "error" : level.includes("warn") ? "warn" : level.includes("success") ? "success" : "info";
     logMessage(message, logLevel);
   });
 }
 
 function cacheTask(task) {
-  if (!task || !task.id) return;
+  if (!task?.id) return;
   state.taskCache.set(task.id, task);
   const entry = {
     id: task.id,
     provider: task.provider || state.currentProvider,
     application: task.application || state.currentApplication || "",
     status: task.status || "unknown",
-    created_by: task.created_by || null,
     created_at: task.created_at || null,
     updated_at: task.updated_at || new Date().toISOString(),
     videoUrl: getVideoUrl(task)
   };
   const index = state.history.findIndex((item) => item.id === task.id);
-  if (index >= 0) {
-    state.history[index] = { ...state.history[index], ...entry };
-  } else {
-    state.history.unshift(entry);
-    if (state.history.length > HISTORY_LIMIT) {
-      state.history.length = HISTORY_LIMIT;
-    }
-  }
+  if (index >= 0) { state.history[index] = { ...state.history[index], ...entry }; }
+  else { state.history.unshift(entry); if (state.history.length > HISTORY_LIMIT) state.history.length = HISTORY_LIMIT; }
   renderHistory();
 }
 
 function renderTaskInfo(task) {
-  if (!task) {
-    elements.taskInfo.innerHTML = "<p>No task submitted yet.</p>";
-    return;
-  }
-
+  updateStatusBadge(task);
+  if (!task) { elements.taskInfo.textContent = ""; return; }
   const parts = [];
-  if (task.id) {
-    parts.push(`<p><strong>Task ID:</strong> <code>${escapeHtml(task.id)}</code></p>`);
-  }
-  if (task.provider) {
-    parts.push(`<p><strong>Provider:</strong> ${escapeHtml(task.provider)}</p>`);
-  }
-  if (task.created_by) {
-    parts.push(`<p><strong>Created by:</strong> ${escapeHtml(task.created_by)}</p>`);
-  }
-  if (task.created_at) {
-    parts.push(`<p><strong>Created:</strong> ${escapeHtml(formatTimestamp(task.created_at))}</p>`);
-  }
-  if (task.updated_at && task.updated_at !== task.created_at) {
-    parts.push(`<p><strong>Updated:</strong> ${escapeHtml(formatTimestamp(task.updated_at))}</p>`);
-  }
-  if (task.application) {
-    parts.push(`<p><strong>Application:</strong> ${escapeHtml(task.application)}</p>`);
-  }
-  if (task.status) {
-    const label = statusLabels[task.status] || task.status;
-    parts.push(
-      `<p><strong>Status:</strong> <span class="status status-${escapeHtml(task.status)}">${escapeHtml(label)}</span></p>`
-    );
-  }
-  if (typeof task.queue_position === "number") {
-    parts.push(`<p><strong>Queue position:</strong> ${task.queue_position}</p>`);
-  }
-  if (task.status_raw) {
-    parts.push(`<p><strong>Provider status:</strong> ${escapeHtml(task.status_raw)}</p>`);
-  }
-  if (task.metrics && Object.keys(task.metrics).length > 0) {
-    parts.push(`<p><strong>Metrics:</strong> ${escapeHtml(JSON.stringify(task.metrics))}</p>`);
-  }
-  if (task.result?.seed !== undefined) {
-    parts.push(`<p><strong>Seed:</strong> ${escapeHtml(String(task.result.seed))}</p>`);
-  }
-  if (task.status_url) {
-    const url = escapeHtml(task.status_url);
-    parts.push(`<p><strong>Status URL:</strong> <a href="${url}" target="_blank" rel="noopener">${url}</a></p>`);
-  }
-  if (task.result_url) {
-    const url = escapeHtml(task.result_url);
-    parts.push(`<p><strong>Result URL:</strong> <a href="${url}" target="_blank" rel="noopener">${url}</a></p>`);
-  }
-  if (task.error?.message) {
-    parts.push(`<p class="error-text"><strong>Error:</strong> ${escapeHtml(task.error.message)}</p>`);
-  }
-
-  const videoUrl = getVideoUrl(task);
-  if (videoUrl) {
-    const safeUrl = escapeHtml(videoUrl);
-    parts.push(`<p><strong>Video URL:</strong> <a href="${safeUrl}" target="_blank" rel="noopener">${safeUrl}</a></p>`);
-  }
-
-  elements.taskInfo.innerHTML = parts.join("\n");
+  if (task.id) parts.push(`ID: ${escapeHtml(task.id)}`);
+  if (task.status) parts.push(`Status: ${statusLabels[task.status] || task.status}`);
+  if (typeof task.queue_position === "number") parts.push(`Queue: ${task.queue_position}`);
+  if (task.result?.seed !== undefined) parts.push(`Seed: ${escapeHtml(String(task.result.seed))}`);
+  if (task.error?.message) parts.push(`Error: ${escapeHtml(task.error.message)}`);
+  elements.taskInfo.textContent = parts.join(" · ");
 }
 
 function renderHistory() {
   if (!elements.historyList) return;
-  if (!sessionManager.isAuthenticated) {
-    elements.historyList.innerHTML = '<li class="empty">Sign in to see recent tasks.</li>';
-    return;
-  }
   if (!state.history.length) {
     elements.historyList.innerHTML = '<li class="empty">No previous tasks yet.</li>';
     return;
@@ -275,27 +189,16 @@ function renderHistory() {
       const id = escapeHtml(entry.id);
       const provider = escapeHtml(entry.provider || "?");
       const status = escapeHtml(entry.status || "unknown");
-      const creator = entry.created_by ? ` ? by ${escapeHtml(entry.created_by)}` : "";
-      const updated = entry.updated_at ? ` ? ${escapeHtml(formatTimestamp(entry.updated_at))}` : "";
-      return `
-        <li>
-          <div>
-            <strong>${id}</strong>
-            <br/><small>${provider} ? ${status}${creator}${updated}</small>
-          </div>
-          <button type="button" data-task-id="${id}" data-provider="${provider}">Open</button>
-        </li>`;
+      const updated = entry.updated_at ? ` · ${escapeHtml(formatTimestamp(entry.updated_at))}` : "";
+      return `<li>
+        <div><strong>${id}</strong><br/><small>${provider} · ${status}${updated}</small></div>
+        <button type="button" data-task-id="${id}" data-provider="${provider}">Open</button>
+      </li>`;
     })
     .join("\n");
 }
 
 async function refreshHistory() {
-  if (!sessionManager.isAuthenticated) {
-    state.history = [];
-    state.taskCache.clear();
-    renderHistory();
-    return;
-  }
   try {
     const data = await apiClient.json(`${API_BASE}?limit=${HISTORY_LIMIT}`);
     const tasks = Array.isArray(data.tasks) ? data.tasks : [];
@@ -304,7 +207,6 @@ async function refreshHistory() {
       provider: task.provider || state.currentProvider,
       application: task.application || "",
       status: task.status || "unknown",
-      created_by: task.created_by || null,
       created_at: task.created_at || null,
       updated_at: task.updated_at || null,
       videoUrl: getVideoUrl(task)
@@ -317,149 +219,29 @@ async function refreshHistory() {
   }
 }
 
-function setAuthMode(mode) {
-  state.authMode = mode === AUTH_MODES.register ? AUTH_MODES.register : AUTH_MODES.login;
-  elements.authSubmit.textContent = state.authMode === AUTH_MODES.login ? "Sign in" : "Create account";
-  elements.authToggle.textContent =
-    state.authMode === AUTH_MODES.login ? "Create account" : "Have an account? Sign in";
-}
-
-function showAuthError(message) {
-  if (!elements.authError) return;
-  if (message) {
-    elements.authError.textContent = message;
-    elements.authError.classList.remove("hidden");
-  } else {
-    elements.authError.textContent = "";
-    elements.authError.classList.add("hidden");
-  }
-}
-
-function updateAuthUI() {
-  const isAuthed = sessionManager.isAuthenticated;
-  if (isAuthed) {
-    elements.authForm.classList.add("hidden");
-    elements.authStatus.classList.remove("hidden");
-    elements.authUser.textContent = sessionManager.user?.username || "";
-  } else {
-    elements.authStatus.classList.add("hidden");
-    elements.authForm.classList.remove("hidden");
-    elements.authPassword.value = "";
-    showAuthError("");
-  }
-}
-
-async function handleAuthSubmit(event) {
-  event.preventDefault();
-  const username = elements.authUsername.value.trim();
-  const password = elements.authPassword.value;
-  if (!username || !password) {
-    showAuthError("Enter a username and password.");
-    return;
-  }
-  try {
-    showAuthError("");
-    if (state.authMode === AUTH_MODES.login) {
-      await sessionManager.login(username, password);
-      logMessage(`Signed in as ${username}.`, "success");
-    } else {
-      await sessionManager.register(username, password);
-      logMessage(`Account created for ${username}.`, "success");
-    }
-    await refreshAfterAuth();
-  } catch (error) {
-    showAuthError(error.message);
-    logMessage(error.message, "error");
-  }
-}
-
-async function handleLogout() {
-  await sessionManager.logout();
-  logMessage("Signed out.", "warn");
-  await refreshAfterAuth();
-}
-
-async function refreshAfterAuth() {
-  await bootstrapServices();
-  state.currentProvider = providerStore.getSelected();
-  populateProviderOptions();
-  updateAuthUI();
-  await refreshHistory();
-}
-
-function setupAuthHandlers() {
-  if (!elements.authForm) {
-    return;
-  }
-  elements.authForm.addEventListener("submit", handleAuthSubmit);
-  elements.authToggle.addEventListener("click", () => {
-    setAuthMode(state.authMode === AUTH_MODES.login ? AUTH_MODES.register : AUTH_MODES.login);
-    showAuthError("");
-  });
-  if (elements.authLogout) {
-    elements.authLogout.addEventListener("click", handleLogout);
-  }
-  setAuthMode(AUTH_MODES.login);
-  updateAuthUI();
-}
-
 function populateProviderOptions() {
-  const select = elements.provider;
-  if (!select) return;
-  const providers = providerStore.providers || [];
-  const fragment = document.createDocumentFragment();
-  providers.forEach((provider) => {
-    const option = document.createElement("option");
-    option.value = provider;
-    option.textContent = provider === "fal" ? "fal.ai proxy" : provider;
-    fragment.appendChild(option);
-  });
-  select.innerHTML = "";
-  select.appendChild(fragment);
-  const selected = providerStore.getSelected();
-  state.currentProvider = selected;
-  if (providers.includes(selected)) {
-    select.value = selected;
-  }
-  updateProviderKeyInput();
-}
-
-function updateProviderKeyInput() {
-  const provider = elements.provider.value;
-  state.currentProvider = provider;
-  const key = providerStore.getKey(provider);
+  if (!elements.provider) return;
+  elements.provider.innerHTML = '<option value="fal">fal.ai</option>';
+  elements.provider.value = "fal";
+  state.currentProvider = "fal";
+  providerStore.setSelected("fal");
+  const key = providerStore.getKey("fal");
   elements.providerKey.value = key || "";
 }
 
 function setupProviderControls() {
   if (!elements.provider) return;
-  elements.provider.addEventListener("change", () => {
-    const provider = elements.provider.value;
-    providerStore.setSelected(provider);
-    updateProviderKeyInput();
-  });
   elements.providerKey.addEventListener("input", (event) => {
-    providerStore.setKey(elements.provider.value, event.target.value.trim());
+    providerStore.setKey("fal", event.target.value.trim());
   });
   populateProviderOptions();
 }
 
 function handleImageSelection(event) {
   const file = event.target.files?.[0];
-  if (!file) {
-    clearImageUpload(true);
-    return;
-  }
-  if (!file.type.startsWith("image/")) {
-    logMessage("Please choose a valid image file.", "error");
-    clearImageUpload(true);
-    return;
-  }
-  if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-    logMessage("Image is larger than 15 MB. Choose a smaller file.", "error");
-    clearImageUpload(true);
-    return;
-  }
+  if (!file) { clearImageUpload(true); return; }
+  if (!file.type.startsWith("image/")) { logMessage("Please choose a valid image file.", "error"); clearImageUpload(true); return; }
+  if (file.size > MAX_UPLOAD_SIZE_BYTES) { logMessage("Image is larger than 15 MB.", "error"); clearImageUpload(true); return; }
   const reader = new FileReader();
   reader.onload = () => {
     state.imageDataUrl = reader.result;
@@ -468,17 +250,12 @@ function handleImageSelection(event) {
     elements.imageUrl.value = "";
     logMessage(`Loaded image "${file.name}" (${Math.round(file.size / 1024)} KB).`, "info");
   };
-  reader.onerror = () => {
-    logMessage("Failed to read the selected image file.", "error");
-    clearImageUpload(true);
-  };
+  reader.onerror = () => { logMessage("Failed to read the selected image.", "error"); clearImageUpload(true); };
   reader.readAsDataURL(file);
 }
 
 function handleImageUrlChange(event) {
-  if (event.target.value) {
-    clearImageUpload(true);
-  }
+  if (event.target.value) clearImageUpload(true);
 }
 
 function clearImageUpload(quiet = false) {
@@ -486,9 +263,39 @@ function clearImageUpload(quiet = false) {
   state.imageDataUrl = null;
   elements.imagePreview.classList.add("hidden");
   elements.previewImage.removeAttribute("src");
-  if (!quiet) {
-    logMessage("Removed uploaded image.", "warn");
-  }
+  if (!quiet) logMessage("Removed uploaded image.", "warn");
+}
+
+function openModal(modal) {
+  modal.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+}
+
+function closeModal(modal) {
+  modal.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+}
+
+function setupModals() {
+  elements.promptBtn.addEventListener("click", () => openModal(elements.promptModal));
+  elements.promptModalClose.addEventListener("click", () => closeModal(elements.promptModal));
+  elements.promptApply.addEventListener("click", () => closeModal(elements.promptModal));
+
+  elements.imageAttachBtn.addEventListener("click", () => openModal(elements.imageModal));
+  elements.imageModalClose.addEventListener("click", () => closeModal(elements.imageModal));
+  elements.imageApply.addEventListener("click", () => closeModal(elements.imageModal));
+
+  [elements.promptModal, elements.imageModal].forEach((modal) => {
+    modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(modal); });
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      [elements.promptModal, elements.imageModal].forEach((modal) => {
+        if (!modal.classList.contains("hidden")) closeModal(modal);
+      });
+    }
+  });
 }
 
 function setupFormHandlers() {
@@ -496,36 +303,18 @@ function setupFormHandlers() {
   elements.imageInput.addEventListener("change", handleImageSelection);
   elements.imageUrl.addEventListener("input", handleImageUrlChange);
   elements.clearImage.addEventListener("click", () => clearImageUpload());
-  elements.cancelPoll.addEventListener("click", () => {
-    stopPolling(false);
-    logMessage("Polling cancelled.", "warn");
-  });
+  elements.cancelPoll.addEventListener("click", () => { stopPolling(false); logMessage("Polling cancelled.", "warn"); });
   elements.historyList.addEventListener("click", handleHistoryClick);
   elements.form.addEventListener("submit", handleSubmit);
-}
-
-function requireAuthenticated() {
-  if (!sessionManager.isAuthenticated) {
-    logMessage("Sign in before submitting tasks.", "error");
-    elements.authForm?.classList.remove("hidden");
-    return false;
-  }
-  return true;
 }
 
 function buildArguments() {
   const application = elements.application.value.trim();
   const promptText = elements.prompt.value.trim();
-  if (!application) {
-    throw new Error("Enter an application identifier.");
-  }
-  if (!promptText) {
-    throw new Error("Enter a prompt describing the video.");
-  }
+  if (!application) throw new Error("Enter an application identifier.");
+  if (!promptText) throw new Error("Enter a prompt describing the video.");
   const duration = Number.parseInt(elements.duration.value, 10);
-  if (Number.isNaN(duration) || duration < 3 || duration > 12) {
-    throw new Error("Duration must be between 3 and 12 seconds.");
-  }
+  if (Number.isNaN(duration) || duration < 3 || duration > 12) throw new Error("Duration must be between 3 and 12 seconds.");
   const args = {
     prompt: promptText,
     resolution: elements.resolution.value || "1080p",
@@ -533,48 +322,28 @@ function buildArguments() {
     duration: String(duration),
     enable_safety_checker: elements.safetyChecker.checked
   };
-  if (elements.cameraFixed.checked) {
-    args.camera_fixed = true;
-  }
+  if (elements.cameraFixed.checked) args.camera_fixed = true;
   const seedValue = elements.seed.value.trim();
   if (seedValue !== "") {
     const numericSeed = Number.parseInt(seedValue, 10);
-    if (Number.isNaN(numericSeed)) {
-      throw new Error("Seed must be an integer.");
-    }
+    if (Number.isNaN(numericSeed)) throw new Error("Seed must be an integer.");
     args.seed = numericSeed;
   }
   const referenceUrl = state.imageDataUrl || elements.imageUrl.value.trim();
-  if (referenceUrl) {
-    args.image_url = referenceUrl;
-  }
+  if (referenceUrl) args.image_url = referenceUrl;
   return { application, arguments: args };
 }
 
 async function handleSubmit(event) {
   event.preventDefault();
-  if (!requireAuthenticated()) {
-    return;
-  }
   setBusy(true);
   setVideoUrl(null);
   stopPolling(true);
   try {
     const result = await createTask();
-    if (!result) {
-      return;
-    }
-    const intervalSeconds = Math.min(
-      30,
-      Math.max(2, Number.parseInt(elements.pollInterval.value, 10) || 5)
-    );
-    pollTask({
-      provider: result.provider,
-      apiKey: result.apiKey,
-      taskId: result.task.id,
-      application: result.application,
-      intervalSeconds
-    });
+    if (!result) return;
+    const intervalSeconds = Math.min(30, Math.max(2, Number.parseInt(elements.pollInterval.value, 10) || 5));
+    pollTask({ provider: result.provider, apiKey: result.apiKey, taskId: result.task.id, application: result.application, intervalSeconds });
   } catch (error) {
     logMessage(error.message, "error");
   } finally {
@@ -596,24 +365,16 @@ async function createTask() {
     logMessage(error.message, "error");
     throw error;
   }
-
   const provider = payload.provider;
   const apiKey = payload.credentials?.[provider]?.apiKey || "";
   state.currentProvider = provider;
   state.currentApplication = payload.application;
   state.seenLogEntries = new Set();
-
-  logMessage(`Submitting task via ${provider}...`);
-  const task = await apiClient
-    .json(API_BASE, {
-      method: "POST",
-      body: payload
-    })
-    .catch((error) => {
-      logMessage(error.message || "Task creation failed.", "error");
-      throw error;
-    });
-
+  logMessage(`Submitting task via ${provider}…`);
+  const task = await apiClient.json(API_BASE, { method: "POST", body: payload }).catch((error) => {
+    logMessage(error.message || "Task creation failed.", "error");
+    throw error;
+  });
   handleTaskResponse(task);
   await refreshHistory();
   return { task, provider, apiKey, application: task.application || payload.application };
@@ -637,36 +398,23 @@ async function pollTask({ provider, apiKey, taskId, application, intervalSeconds
 
   const poll = async () => {
     try {
-      logMessage("Checking task status...");
+      logMessage("Checking task status…");
       const search = new URLSearchParams();
-      if (application) {
-        search.set("application", application);
-      }
-      if (provider) {
-        search.set("provider", provider);
-      }
-      const response = await apiClient.request(`${API_BASE}/${encodeURIComponent(taskId)}?${search.toString()}`, {
-        method: "GET",
-        signal: controller.signal
-      });
+      if (application) search.set("application", application);
+      if (provider) search.set("provider", provider);
+      const response = await apiClient.request(`${API_BASE}/${encodeURIComponent(taskId)}?${search.toString()}`, { method: "GET", signal: controller.signal });
       const text = await response.text();
       const payload = text ? JSON.parse(text) : {};
-      if (!response.ok) {
-        const message = payload?.error?.message || response.statusText || "Status request failed.";
-        logMessage(message, "error");
-        stopPolling(false);
-        return;
-      }
+      if (!response.ok) { logMessage(payload?.error?.message || response.statusText || "Status request failed.", "error"); stopPolling(false); return; }
       payload.provider = provider;
       handleTaskResponse(payload);
-
       switch (payload.status) {
         case "queued":
         case "running":
           state.pollTimeoutId = setTimeout(poll, intervalSeconds * 1000);
           break;
         case "succeeded":
-          logMessage("Task completed successfully. Video is ready!", "success");
+          logMessage("Task completed. Video is ready!", "success");
           stopPolling(false);
           await refreshHistory();
           break;
@@ -685,11 +433,8 @@ async function pollTask({ provider, apiKey, taskId, application, intervalSeconds
           state.pollTimeoutId = setTimeout(poll, intervalSeconds * 1000);
       }
     } catch (error) {
-      if (error.name === "AbortError") {
-        logMessage("Polling cancelled.", "warn");
-      } else {
-        logMessage(`Polling error: ${error.message}`, "error");
-      }
+      if (error.name === "AbortError") logMessage("Polling cancelled.", "warn");
+      else logMessage(`Polling error: ${error.message}`, "error");
       stopPolling(false);
     }
   };
@@ -705,13 +450,9 @@ async function handleHistoryClick(event) {
   const cached = state.taskCache.get(taskId);
   const application = cached?.application || state.currentApplication || "";
   const params = new URLSearchParams();
-  if (application) {
-    params.set("application", application);
-  }
-  if (provider) {
-    params.set("provider", provider);
-  }
-  logMessage(`Loading task ${taskId} (${provider})...`);
+  if (application) params.set("application", application);
+  if (provider) params.set("provider", provider);
+  logMessage(`Loading task ${taskId} (${provider})…`);
   try {
     const task = await apiClient.json(`${API_BASE}/${encodeURIComponent(taskId)}?${params.toString()}`);
     task.provider = provider;
@@ -723,13 +464,12 @@ async function handleHistoryClick(event) {
 
 async function main() {
   await bootstrapServices();
-  setupAuthHandlers();
   setupProviderControls();
   setupFormHandlers();
-  updateAuthUI();
+  setupModals();
   await refreshHistory();
   resetTaskState();
-  logMessage('Ready. Configure your request and click "Create task" when you are set.');
+  logMessage('Ready. Click Prompt to write your prompt, Image to attach a reference, then "Start edit".');
 }
 
 main().catch((error) => {

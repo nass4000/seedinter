@@ -18,12 +18,11 @@ from seedinter.auth import (
     verify_password,
 )
 from seedinter.models import TaskRecord, User, db
-from seedinter.providers import ByteDanceProvider, FalProvider, ProviderError, TaskPayload
+from seedinter.providers import FalProvider, ProviderError, TaskPayload
 
-APP_DEFAULT = os.getenv("FAL_APP_DEFAULT", "bytedance/seedance/v1/pro/image-to-video")
+APP_DEFAULT = os.getenv("FAL_APP_DEFAULT", "fal-ai/bytedance/seedance-2.0/image-to-video")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///seedinter.sqlite3")
-DEFAULT_PROVIDER_NAME = os.getenv("SEEDINTER_DEFAULT_PROVIDER", "fal")
-BYTEDANCE_DEFAULT_APP = os.getenv("BYTEDANCE_DEFAULT_APPLICATION", APP_DEFAULT)
+DEFAULT_PROVIDER_NAME = "fal"
 MAX_TASK_LIST = int(os.getenv("SEEDINTER_MAX_TASKS", "100"))
 
 app = Flask(__name__, static_folder="web", static_url_path="")
@@ -39,9 +38,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 fal_provider = FalProvider(default_application=APP_DEFAULT)
-bytedance_provider = ByteDanceProvider.from_env()
-PROVIDERS = {fal_provider.name: fal_provider, bytedance_provider.name: bytedance_provider}
-DEFAULT_PROVIDER = DEFAULT_PROVIDER_NAME if DEFAULT_PROVIDER_NAME in PROVIDERS else fal_provider.name
+PROVIDERS = {fal_provider.name: fal_provider}
+DEFAULT_PROVIDER = fal_provider.name
 
 
 @app.before_request
@@ -124,35 +122,15 @@ def extract_fal_api_key(payload: Optional[dict[str, Any]]) -> Optional[str]:
     return env_key.strip() if env_key else None
 
 
-def extract_bytedance_api_key(payload: Optional[dict[str, Any]]) -> Optional[str]:
-    key = _find_api_key(payload, bytedance_provider.name)
-    if key:
-        return key
-    header_key = request.headers.get("X-ByteDance-Key")
-    if isinstance(header_key, str) and header_key.strip():
-        return header_key.strip()
-    scheme, value = parse_authorization_header()
-    if scheme in {"bearer", "token", "bytedance"} and value:
-        return value
-    env_key = os.getenv("BYTEDANCE_API_KEY")
-    return env_key.strip() if env_key else None
-
-
 def extract_provider_api_key(provider_name: str, payload: Optional[dict[str, Any]]) -> Optional[str]:
     if provider_name == fal_provider.name:
         return extract_fal_api_key(payload)
-    if provider_name == bytedance_provider.name:
-        return extract_bytedance_api_key(payload)
     return _find_api_key(payload, provider_name)
 
 
 def resolve_application(provider_name: str, payload_application: Optional[str]) -> str:
     if isinstance(payload_application, str) and payload_application.strip():
         return payload_application.strip()
-    if provider_name == fal_provider.name:
-        return APP_DEFAULT
-    if provider_name == bytedance_provider.name:
-        return BYTEDANCE_DEFAULT_APP
     return APP_DEFAULT
 
 
@@ -310,9 +288,6 @@ def session_info():
 def tasks_collection():
     if request.method == "OPTIONS":
         return make_response("", 204)
-    auth_error = ensure_authenticated()
-    if auth_error:
-        return auth_error
     if request.method == "GET":
         limit_raw = request.args.get("limit")
         try:
@@ -368,9 +343,6 @@ def tasks_collection():
 def task_detail(task_id: str):
     if request.method == "OPTIONS":
         return make_response("", 204)
-    auth_error = ensure_authenticated()
-    if auth_error:
-        return auth_error
 
     record = TaskRecord.query.filter_by(external_id=task_id).first()
     provider_name = request.args.get("provider") or (record.provider if record else DEFAULT_PROVIDER)
