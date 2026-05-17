@@ -16,76 +16,83 @@
           <a href="/about">Seedream edit</a>
         </nav>
       </div>
-      <p class="description">Trigger Seedance image-to-video jobs through either the fal.ai relay or the direct ByteDance API. Credentials stay in your browser unless you ask the proxy to forward them for a given task.</p>
-      <div class="auth-bar" id="auth-bar">
-        <form id="auth-form" class="auth-form" autocomplete="off">
-          <div class="auth-fields">
-            <label>
-              Username
-              <input id="auth-username" name="username" type="text" autocomplete="username" required />
-            </label>
-            <label>
-              Password
-              <input id="auth-password" name="password" type="password" autocomplete="current-password" required />
-            </label>
-          </div>
-          <div class="auth-actions">
-            <button type="submit" id="auth-submit">Sign in</button>
-            <button type="button" id="auth-toggle" class="secondary">Create account</button>
-          </div>
-          <p id="auth-error" class="auth-error hidden" role="alert"></p>
-        </form>
-        <div id="auth-status" class="auth-status hidden" aria-live="polite">
-          <p>Signed in as <strong id="auth-user"></strong></p>
-          <div class="auth-actions">
-            <button type="button" id="auth-logout" class="secondary">Sign out</button>
-          </div>
-        </div>
-      </div>
     </header>
 
-    <section class="panel">
-      <form id="generation-form" novalidate>
-        <fieldset>
-          <legend>Provider</legend>
-          <label>
-            Backend provider
+    <div class="editor-workspace">
+      <!-- Left: Toolbar sidebar -->
+      <aside class="icon-toolbar">
+        <div class="toolbar-actions">
+          <button type="button" class="icon-btn" id="image-attach-btn" title="Attach reference image">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+            <span class="icon-label">Image</span>
+          </button>
+          <button type="button" class="icon-btn" id="prompt-btn" title="Edit prompt">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span class="icon-label">Prompt</span>
+          </button>
+        </div>
+        <div class="toolbar-divider"></div>
+        <div class="toolbar-section">
+          <p class="toolbar-section-title">Provider</p>
+          <label class="toolbar-label">
             <select id="provider" name="provider">
-              <option value="fal">fal.ai proxy</option>
+              <option value="fal">fal.ai</option>
             </select>
-            <small class="hint">Options are loaded from the server after signing in.</small>
           </label>
-          <label>
-            Provider API key
-            <input id="provider-key" name="providerKey" type="password" autocomplete="off" placeholder="fal-... or token" />
-            <small class="hint">Stored in local storage only and attached to requests for the selected provider.</small>
+          <label class="toolbar-label">
+            API key
+            <input id="provider-key" name="providerKey" type="password" autocomplete="off" placeholder="fal-…" />
           </label>
-        </fieldset>
+        </div>
+        <div class="toolbar-divider"></div>
+        <div class="toolbar-section">
+          <p class="toolbar-section-title">Model</p>
+          <label class="toolbar-label">
+            <select id="application" name="application" required>
+              <option value="fal-ai/bytedance/seedance-2.0/image-to-video">Seedance 2.0 Image-to-Video (latest)</option>
+              <option value="fal-ai/bytedance/seedance-2.0/text-to-video">Seedance 2.0 Text-to-Video</option>
+              <option value="fal-ai/bytedance/seedance/v1.5/pro/image-to-video">Seedance 1.5 Pro Image-to-Video</option>
+              <option value="fal-ai/bytedance/seedance/v1/pro/image-to-video">Seedance 1.0 Pro Image-to-Video</option>
+            </select>
+          </label>
+        </div>
+      </aside>
 
-        <fieldset>
-          <legend>Application</legend>
-          <label>
-            Application ID
-            <input id="application" name="application" type="text" required value="fal-ai/bytedance/seedance/v1/pro/image-to-video" />
-            <small class="hint">Override if you use a different provider endpoint.</small>
-          </label>
-        </fieldset>
+      <!-- Center: Status display + action buttons -->
+      <section class="status-center">
+        <div class="status-box" id="status-panel">
+          <div class="status-placeholder" id="status-placeholder">
+            <svg class="status-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="23 7 16 12 23 17 23 7"/>
+              <rect x="1" y="5" width="15" height="14" rx="2"/>
+            </svg>
+            <p class="status-label">Video Edited</p>
+          </div>
+          <video id="result-video" class="status-video hidden" controls preload="metadata"></video>
+          <div id="task-badge" class="status-badge hidden"></div>
+        </div>
+        <div id="task-info" class="task-meta"></div>
+        <div class="center-actions">
+          <button type="submit" form="generation-form" id="submit-button" class="primary">Start edit</button>
+          <button type="button" id="cancel-poll" class="secondary" disabled>Cancel</button>
+        </div>
+      </section>
 
-        <fieldset>
-          <legend>Prompt</legend>
-          <label>
-            Prompt text
-            <textarea id="prompt" name="prompt" rows="4" required>At breakneck speed, drones thread through intricate obstacles or stunning natural wonders, delivering an immersive, heart-pounding flying experience.</textarea>
-          </label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Generation options</legend>
-          <div class="field-grid">
+      <!-- Right: Options sidebar -->
+      <aside class="options-sidebar">
+        <form id="generation-form" novalidate>
+          <div class="options-group">
+            <h3 class="options-title">Generate options</h3>
             <label>
               Resolution
               <select id="resolution" name="resolution">
-                <option value="1080p">1080p (default)</option>
+                <option value="1080p">1080p</option>
                 <option value="720p">720p</option>
                 <option value="480p">480p</option>
               </select>
@@ -103,7 +110,7 @@
               </select>
             </label>
             <label>
-              Duration (seconds)
+              Duration (s)
               <input id="duration" name="duration" type="number" min="3" max="12" step="1" value="5" />
             </label>
             <label class="checkbox">
@@ -112,63 +119,80 @@
             </label>
             <label class="checkbox">
               <input id="safety-checker" name="safetyChecker" type="checkbox" checked />
-              Enable safety checker
+              Safety checker
             </label>
             <label>
-              Seed (-1 for random)
+              Seed (-1 random)
               <input id="seed" name="seed" type="number" value="-1" />
             </label>
+            <label>
+              Poll interval (s)
+              <input id="poll-interval" name="pollInterval" type="number" min="2" max="30" step="1" value="5" />
+            </label>
           </div>
-        </fieldset>
 
-        <fieldset>
-          <legend>Image</legend>
-          <label class="file-picker">
-            Reference image (upload)
-            <input id="image-input" name="image" type="file" accept="image/*" />
-          </label>
-          <div class="divider"><span>or</span></div>
-          <label>
-            Reference image URL
-            <input id="image-url" name="imageUrl" type="url" placeholder="https://..." />
-          </label>
-          <div id="image-preview" class="image-preview hidden">
-            <img id="preview-image" alt="Uploaded preview" />
-            <button type="button" id="clear-image" class="secondary">Remove upload</button>
-          </div>
-        </fieldset>
+        </form>
+      </aside>
+    </div>
 
-        <fieldset>
-          <legend>Polling</legend>
-          <label>
-            Poll interval (seconds)
-            <input id="poll-interval" name="pollInterval" type="number" min="2" max="30" step="1" value="5" />
-          </label>
-        </fieldset>
-
-        <div class="actions">
-          <button type="submit" id="submit-button" class="primary">Create task</button>
-          <button type="button" id="cancel-poll" class="secondary" disabled>Cancel polling</button>
+    <div class="activity-footer">
+      <details>
+        <summary>Activity log &amp; history</summary>
+        <div class="log-container">
+          <pre id="log"></pre>
         </div>
-      </form>
-    </section>
-
-    <section class="panel" id="status-panel">
-      <h2>Status</h2>
-      <div id="task-info" class="task-info">
-        <p>No task submitted yet.</p>
-      </div>
-      <video id="result-video" class="hidden" controls preload="metadata"></video>
-      <div class="log-container">
-        <h3>Activity log</h3>
-        <pre id="log"></pre>
-      </div>
-      <div class="history">
-        <h3>Recent tasks</h3>
-        <ul id="history-list"></ul>
-      </div>
-    </section>
+        <div class="history">
+          <h3>Recent tasks</h3>
+          <ul id="history-list"></ul>
+        </div>
+      </details>
+    </div>
   </main>
+
+  <!-- Prompt modal -->
+  <div class="modal-overlay hidden" id="prompt-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Video Prompt</h3>
+        <button type="button" class="modal-close" id="prompt-modal-close">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="prompt" name="prompt" rows="7" placeholder="Describe the video you want to generate…">At breakneck speed, drones thread through intricate obstacles or stunning natural wonders, delivering an immersive, heart-pounding flying experience.</textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="prompt-apply" class="primary">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image attach modal -->
+  <div class="modal-overlay hidden" id="image-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Reference Image</h3>
+        <button type="button" class="modal-close" id="image-modal-close">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <label class="file-picker">
+          Upload reference image
+          <input id="image-input" name="image" type="file" accept="image/*" />
+        </label>
+        <div id="image-preview" class="image-preview hidden">
+          <img id="preview-image" alt="Uploaded preview" />
+          <button type="button" id="clear-image" class="secondary">Remove</button>
+        </div>
+        <div class="divider"><span>or</span></div>
+        <label>
+          Image URL
+          <input id="image-url" name="imageUrl" type="url" placeholder="https://…" />
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="image-apply" class="primary">Done</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="app.js"></script>
 </body>
 </html>
